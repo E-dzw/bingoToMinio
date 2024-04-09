@@ -5,10 +5,7 @@ package cmd
 
 import (
 	"bingoToMinio/global"
-	"bingoToMinio/models"
-	backup "bingoToMinio/services"
 	"os"
-	"strconv"
 
 	"github.com/spf13/cobra"
 )
@@ -21,9 +18,7 @@ var rootCmd = &cobra.Command{
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := backup.Backup(backConf); err != nil {
-			global.Slogger.Error(err)
-		}
+		global.Slogger.Info("please use subcommand to backup")
 	},
 }
 
@@ -36,7 +31,8 @@ func Execute() {
 	}
 }
 
-var backConf models.BackupConfT
+var mysqlHost, mysqlUser, mysqlPassword, minioPath, minioBucketName, minioHost, minioAccessKey, minioSecretKey, tmpPath, startBinlog string
+var mysqlPort, minioPort, conbackupNumber int
 
 func init() {
 	// Here you will define your flags and configuration settings.
@@ -47,41 +43,15 @@ func init() {
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-	mysqlHost := rootCmd.Flags().String("mysqlHost", "127.0.0.1", "mysql server address")
-	mysqlPort := rootCmd.Flags().Int("mysqlPort", 3306, "mysql server port")
-	mysqlUser := rootCmd.Flags().String("mysqlUser", "", "mysql account")
-	mysqlPassword := rootCmd.Flags().String("mysqlPassword", "", "mysql password")
-	minioPath := rootCmd.Flags().String("minioPath", "/", "define a minio path to store binlog")
-	minioBucketName := rootCmd.Flags().String("minioBucketName", "", "minio bucket name ")
-	minioHost := rootCmd.Flags().String("minioHost", "127.0.0.1", "minio address")
-	minioPort := rootCmd.Flags().Int("minioPort", 9000, "minio s3 port")
-	minioAccessKey := rootCmd.Flags().String("minioAccessKey", "", "minio AccessKey")
-	minioSecretKey := rootCmd.Flags().String("minioSecretKey", "", "minio SecretKey")
-	tmpPath := rootCmd.Flags().String("tmpPath", "./tmpPath", "define  a temporary local file path to store binlog from mysql server")
-	conbackupNumber := rootCmd.Flags().Int("conbackupNumber", 1, "how many backup go routine to backup binlog to minio")
-	startBinlog := rootCmd.Flags().String("startBinlog", "", "where from to start backup  ")
-	backupType := rootCmd.Flags().String("backupType", "local", "the type of backup binglog.local: binlogs are stored in tmpPath dir.minio: binlogs are stored in minio storage")
+	// rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().StringVar(&mysqlHost, "mysqlHost", "127.0.0.1", "mysql server address")
+	rootCmd.PersistentFlags().IntVar(&mysqlPort, "mysqlPort", 3306, "mysql server port")
+	rootCmd.PersistentFlags().StringVar(&mysqlUser, "mysqlUser", "", "mysql account")
+	rootCmd.PersistentFlags().StringVar(&mysqlPassword, "mysqlPassword", "", "mysql password")
+	rootCmd.PersistentFlags().StringVar(&tmpPath, "tmpPath", "./tmpPath", "define  a temporary local file path to store binlog from mysql server")
+	rootCmd.PersistentFlags().IntVar(&conbackupNumber, "conbackupNumber", 1, "how many backup go routine to backup binlog to minio")
+	rootCmd.PersistentFlags().StringVar(&startBinlog, "startBinlog", "", "where from to start backup  ")
 
-	rootCmd.MarkFlagsRequiredTogether([]string{"mysqlUser", "mysqlPassword", "minioBucketName", "minioAccessKey", "minioSecretKey"}...)
-	backConf = models.BackupConfT{
-		MyMysqlConf: models.MyMysqlConf{
-			Host:     *mysqlHost,
-			Port:     strconv.Itoa(*mysqlPort),
-			Username: *mysqlUser,
-			Password: *mysqlPassword,
-		},
-		MyMinioConf: models.MyMinioConf{
-			Endpoint:  *minioHost + ":" + strconv.Itoa(*minioPort),
-			AccessKey: *minioAccessKey,
-			SecretKey: *minioSecretKey,
-		},
-		MinioPrefix:      *minioPath,
-		MinioBucketName:  *minioBucketName,
-		TmpPath:          *tmpPath,
-		ConcurrentNumber: *conbackupNumber,
-		BackupType:       *backupType,
-		StartBinlog:      *startBinlog,
-	}
-
+	rootCmd.MarkPersistentFlagRequired("mysqlUser")
+	rootCmd.MarkPersistentFlagRequired("mysqlPassword")
 }

@@ -3,6 +3,7 @@ package backup
 import (
 	"bingoToMinio/global"
 	"bingoToMinio/models"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,6 +22,10 @@ import (
 )
 
 var logger *zap.SugaredLogger = global.Slogger
+
+const (
+	localProcessionFileName = "backup.record"
+)
 
 func Backup(backConf models.BackupConfT) error {
 	switch backConf.BackupType {
@@ -56,15 +61,22 @@ func backupToMinio(backConf models.BackupConfT) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if isInMasterLogs(lastBinlogName, masterLogs) {
+	if lastBinlogName != "" && isInMasterLogs(lastBinlogName, masterLogs) {
 		p = mysql.Position{
 			Name: lastBinlogName,
 			Pos:  uint32(4),
 		}
 	} else {
-		p = mysql.Position{
-			Name: masterLogs[0].LogName,
-			Pos:  uint32(4),
+		if backConf.StartBinlog != "" {
+			p = mysql.Position{
+				Name: backConf.StartBinlog,
+				Pos:  uint32(4),
+			}
+		} else {
+			p = mysql.Position{
+				Name: masterLogs[0].LogName,
+				Pos:  uint32(4),
+			}
 		}
 	}
 	BinStream, err := BinSyncer.StartSync(p)
@@ -78,7 +90,7 @@ func backupToMinio(backConf models.BackupConfT) error {
 	var wg *sync.WaitGroup = &sync.WaitGroup{}
 	wg.Add(backConf.ConcurrentNumber)
 	for i := 0; i < backConf.ConcurrentNumber; i++ {
-		go uploadMinio(minioClient, fileNameChan, wg, backConf.TmpPath, backConf.MinioBucketName)
+		go uploadMinio(minioClient, fileNameChan, wg, backConf.TmpPath, backConf.MinioBucketName, backConf.MinioPrefix)
 	}
 	defer wg.Wait()
 
@@ -108,7 +120,7 @@ func backupToMinio(backConf models.BackupConfT) error {
 			if len(fileName) == 0 {
 				return errors.New("can not get filename from binlog event")
 			}
-			osFile, err = os.OpenFile(filepath.Join(backConf.TmpPath, fileName), os.O_CREATE|os.O_WRONLY, 0644)
+			osFile, err = os.OpenFile(filepath.Join(backConf.TmpPath, fileName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 			if err != nil {
 				return errors.New(fmt.Sprintf("failed to create file. filenpath:%s", filepath.Join(backConf.TmpPath, fileName)))
 			}
@@ -127,13 +139,13 @@ func backupToMinio(backConf models.BackupConfT) error {
 	}
 }
 
-func uploadMinio(minioClient *minio.Client, fileNameChan chan string, wg *sync.WaitGroup, fPath, bucketName string) {
+func uploadMinio(minioClient *minio.Client, fileNameChan chan string, wg *sync.WaitGroup, fPath, bucketName, minioPrefix string) {
 	for {
 		fileName, ok := <-fileNameChan
 		if !ok {
 			wg.Done()
 		}
-		_, err := minioClient.FPutObject(context.Background(), bucketName, fileName, filepath.Join(fPath, fileName), minio.PutObjectOptions{})
+		_, err := minioClient.FPutObject(context.Background(), bucketName, minioPrefix+"/"+fileName, filepath.Join(fPath, fileName), minio.PutObjectOptions{})
 		if err != nil {
 			logger.Errorf("failed to upload file. err: %s\n", err.Error())
 			return
@@ -145,6 +157,14 @@ func uploadMinio(minioClient *minio.Client, fileNameChan chan string, wg *sync.W
 
 }
 
+func makeTmpDir(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return errors.New(fmt.Sprintf("failed to make tmp dir. err: %s\n", err.Error()))
+		}
+	}
+	return nil
+}
 func isInMasterLogs(binlogName string, masterBinlogs []models.MasterLogsT) bool {
 	for _, v := range masterBinlogs {
 		if v.LogName == binlogName {
@@ -177,9 +197,13 @@ func isfirstlyBackupToMinio(ctx context.Context, minioClient *minio.Client, pref
 	return lastBinlogName, nil
 }
 func backupToLocalFile(backConf models.BackupConfT) error {
+	err := makeTmpDir(backConf.TmpPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tx, err := backConf.GetDB()
 	if err != nil {
-		return errors.New("failed to init db")
+		return errors.Annotate(err, "failed to init db")
 	}
 	BinsyncConf, err := newBinlogSyncerConf(backConf.MyMysqlConf)
 	if err != nil {
@@ -190,8 +214,12 @@ func backupToLocalFile(backConf models.BackupConfT) error {
 	if len(masterLogs) == 0 {
 		return errors.New("first binlog  is not found")
 	}
+	startBinlogName, err := isFirstlyBackupToLocalFile(masterLogs, backConf.TmpPath)
+	if err != nil {
+		return errors.New(fmt.Sprintf("failed to get start  binlog.error: %s", err.Error()))
+	}
 	p := mysql.Position{
-		Name: masterLogs[0].LogName,
+		Name: startBinlogName,
 		Pos:  uint32(4),
 	}
 	BinStream, err := BinSyncer.StartSync(p)
@@ -200,10 +228,14 @@ func backupToLocalFile(backConf models.BackupConfT) error {
 	}
 	var timeOut time.Duration = 3600 * time.Second
 	var fileName string
-	var osFile *os.File
+	var osFile, recordFile *os.File
+	recordFile, _ = os.OpenFile(filepath.Join(backConf.TmpPath, localProcessionFileName), os.O_WRONLY, 0644)
 	defer func() {
 		if osFile != nil {
 			osFile.Close()
+		}
+		if recordFile != nil {
+			recordFile.Close()
 		}
 	}()
 
@@ -229,14 +261,20 @@ func backupToLocalFile(backConf models.BackupConfT) error {
 			if osFile != nil {
 				osFile.Close()
 			}
-			if fileName == masterLogs[1].LogName {
-				return errors.New(fmt.Sprintf("finish sync fist binlog.binlogName: %s", masterLogs[0].LogName))
-			}
+			// if fileName == masterLogs[1].LogName {
+			// 	return errors.New(fmt.Sprintf("finish sync fist binlog.binlogName: %s", masterLogs[0].LogName))
+			// }
 
 			if len(fileName) == 0 {
 				return errors.New("can not get filename from binlog event")
 			}
-			osFile, err = os.OpenFile(filepath.Join(backConf.TmpPath, fileName), os.O_CREATE|os.O_WRONLY, 0644)
+			recordFile.Truncate(0)
+			recordFile.Seek(0, 0)
+			_, err := recordFile.Write([]byte(fileName))
+			if err != nil {
+				return errors.Annotate(err, "failed to record binlog name.")
+			}
+			osFile, err = os.OpenFile(filepath.Join(backConf.TmpPath, fileName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 			if err != nil {
 				return errors.New(fmt.Sprintf("failed to create file. filenpath:%s", filepath.Join(backConf.TmpPath, fileName)))
 			}
@@ -253,6 +291,42 @@ func backupToLocalFile(backConf models.BackupConfT) error {
 		}
 
 	}
+}
+
+func isFirstlyBackupToLocalFile(masterLogs []models.MasterLogsT, path string) (string, error) {
+
+	recordF, err := os.OpenFile(filepath.Join(path, localProcessionFileName), os.O_RDWR, 0644)
+	if err != nil && os.IsNotExist(err) {
+		f, interErr := os.OpenFile(filepath.Join(path, localProcessionFileName), os.O_CREATE|os.O_WRONLY, 0644)
+		if interErr != nil {
+			return "", errors.Trace(interErr)
+		}
+		defer f.Close()
+		_, interErr = f.Write([]byte(masterLogs[0].LogName))
+		if interErr != nil {
+			return "", errors.Trace(interErr)
+		}
+		return masterLogs[0].LogName, nil
+	}
+	if err != nil {
+		errors.Trace(err)
+	}
+	defer recordF.Close()
+	recordBinlogName, err := io.ReadAll(recordF)
+	if err != nil {
+		errors.Trace(err)
+	}
+	recordBinlogName = bytes.Trim(recordBinlogName, "\n")
+	recordBinlogName = bytes.TrimSpace(recordBinlogName)
+	if len(recordBinlogName) == 0 {
+		logger.Warnf("%s is empty", string(recordBinlogName))
+		return string(recordBinlogName), nil
+	}
+	if !isInMasterLogs(string(recordBinlogName), masterLogs) {
+		logger.Warnf("%s is not in master logs,start to backup binlog from first in current master logs", string(recordBinlogName))
+	}
+	return string(recordBinlogName), nil
+
 }
 
 func newBinlogSyncerConf(cfg models.MyMysqlConf) (replication.BinlogSyncerConfig, error) {

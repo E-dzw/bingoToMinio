@@ -33,7 +33,7 @@ func (M MyMysqlConf) GetDB() (*gorm.DB, error) {
 	if M.Password == "" {
 		return nil, errors.New("password is null")
 	}
-	MysqlUrl := fmt.Sprintf("%s:%s@tcp(%s:%s)/ops_test?charset=utf8mb4&parseTime=True&loc=Local", M.Username, M.Password, M.Host, M.Port)
+	MysqlUrl := fmt.Sprintf("%s:%s@tcp(%s:%s)/mysql?charset=utf8mb4&parseTime=True&loc=Local", M.Username, M.Password, M.Host, M.Port)
 	DB, err := gorm.Open(gorm_mysql.New(gorm_mysql.Config{
 		DSN: MysqlUrl,
 	}))
