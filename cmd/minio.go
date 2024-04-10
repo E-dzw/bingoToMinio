@@ -59,7 +59,7 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	minioCmd.Flags().StringVar(&minioPath, "minioPath", "/", "define a minio path to store binlog")
+	minioCmd.Flags().StringVar(&minioPath, "minioPath", "", "define a minio path to store binlog")
 	minioCmd.Flags().StringVar(&minioBucketName, "minioBucketName", "", "minio bucket name ")
 	minioCmd.Flags().StringVar(&minioHost, "minioHost", "127.0.0.1", "minio address")
 	minioCmd.Flags().IntVar(&minioPort, "minioPort", 9000, "minio s3 port")

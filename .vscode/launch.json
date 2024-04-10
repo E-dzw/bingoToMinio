@@ -11,19 +11,19 @@
             "mode": "auto",
             "program": "${workspaceFolder}/main.go",
             "args": [
-                "local",
+                "minio",
                 // "-h",
                 "--mysqlHost=rm-bp11g0550d7oq42p9.mysql.rds.aliyuncs.com",
                 "--mysqlUser=c2f_admin",
                 "--mysqlPassword=6x8rlS4PC2fG2GxI",
-                //     // "--minioHost=minio-hbos-dev.cfuture.shop",
-                //     // "--minioAccessKey=ikvVLFicIG",
-                //     // "--minioSecretKey=ikvVLFicIG",
-                //     // "--minioBucketName=ops-test",
-                //     // "--minioPath=/binlogs",
-                //     // "--minioPort=80",
+                "--minioHost=minio-hbos-dev.cfuture.shop",
+                "--minioAccessKey=ikvVLFicIG",
+                "--minioSecretKey=ikvVLFicIG",
+                "--minioBucketName=ops-test",
+                "--minioPath=/binlogs",
+                "--minioPort=80",
                 "--tmpPath=/Users/dingzhewei/code/nspace/go/bingoToMinio/binlogs",
-                // "--conbackupNumber=2"
+                "--conbackupNumber=2"
             ]
         }
     ]

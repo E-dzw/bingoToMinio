@@ -48,7 +48,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&mysqlPort, "mysqlPort", 3306, "mysql server port")
 	rootCmd.PersistentFlags().StringVar(&mysqlUser, "mysqlUser", "", "mysql account")
 	rootCmd.PersistentFlags().StringVar(&mysqlPassword, "mysqlPassword", "", "mysql password")
-	rootCmd.PersistentFlags().StringVar(&tmpPath, "tmpPath", "./tmpPath", "define  a temporary local file path to store binlog from mysql server")
+	rootCmd.PersistentFlags().StringVar(&tmpPath, "tmpPath", "./tmpPath", "if subcommand is  minio, defined  a temporary local file path to store binlog .if subcommand is local, defined local file path  store binlog to store binlog")
 	rootCmd.PersistentFlags().IntVar(&conbackupNumber, "conbackupNumber", 1, "how many backup go routine to backup binlog to minio")
 	rootCmd.PersistentFlags().StringVar(&startBinlog, "startBinlog", "", "where from to start backup  ")
 

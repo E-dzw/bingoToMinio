@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ func Backup(backConf models.BackupConfT) error {
 }
 
 func backupToMinio(backConf models.BackupConfT) error {
+	err := makeTmpDir(backConf.TmpPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	var p mysql.Position
 	minioClient, err := backConf.NewClient()
 	if err != nil {
@@ -57,27 +62,13 @@ func backupToMinio(backConf models.BackupConfT) error {
 	if len(masterLogs) == 0 {
 		return errors.New("first binlog  is not found")
 	}
-	lastBinlogName, err := isfirstlyBackupToMinio(context.Background(), minioClient, backConf.MinioPrefix, backConf.MinioBucketName)
+	lastBinlogName, err := isfirstlyBackupToMinio(context.Background(), masterLogs, minioClient, backConf.MinioPrefix, backConf.MinioBucketName)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if lastBinlogName != "" && isInMasterLogs(lastBinlogName, masterLogs) {
-		p = mysql.Position{
-			Name: lastBinlogName,
-			Pos:  uint32(4),
-		}
-	} else {
-		if backConf.StartBinlog != "" {
-			p = mysql.Position{
-				Name: backConf.StartBinlog,
-				Pos:  uint32(4),
-			}
-		} else {
-			p = mysql.Position{
-				Name: masterLogs[0].LogName,
-				Pos:  uint32(4),
-			}
-		}
+	p = mysql.Position{
+		Name: lastBinlogName,
+		Pos:  uint32(4),
 	}
 	BinStream, err := BinSyncer.StartSync(p)
 	if err != nil {
@@ -140,12 +131,20 @@ func backupToMinio(backConf models.BackupConfT) error {
 }
 
 func uploadMinio(minioClient *minio.Client, fileNameChan chan string, wg *sync.WaitGroup, fPath, bucketName, minioPrefix string) {
+	var tmpPrefix string
+	minioPrefix = strings.Trim(minioPrefix, "/")
 	for {
 		fileName, ok := <-fileNameChan
 		if !ok {
 			wg.Done()
 		}
-		_, err := minioClient.FPutObject(context.Background(), bucketName, minioPrefix+"/"+fileName, filepath.Join(fPath, fileName), minio.PutObjectOptions{})
+		if len(minioPrefix) == 0 {
+			tmpPrefix = fileName
+		} else {
+			tmpPrefix = fmt.Sprintf("%s/%s", minioPrefix, fileName)
+		}
+
+		_, err := minioClient.FPutObject(context.Background(), bucketName, tmpPrefix, filepath.Join(fPath, fileName), minio.PutObjectOptions{})
 		if err != nil {
 			logger.Errorf("failed to upload file. err: %s\n", err.Error())
 			return
@@ -174,13 +173,15 @@ func isInMasterLogs(binlogName string, masterBinlogs []models.MasterLogsT) bool 
 	return false
 }
 
-func isfirstlyBackupToMinio(ctx context.Context, minioClient *minio.Client, prefix, bucketName string) (string, error) {
+func isfirstlyBackupToMinio(ctx context.Context, masterLogs []models.MasterLogsT, minioClient *minio.Client, prefix, bucketName string) (string, error) {
 	if bool, err := minioClient.BucketExists(ctx, bucketName); !(bool && err == nil) {
 		return "", errors.Trace(err)
 	}
 	var flagTime time.Time
 	var lastBinlogName string
 	flagTime, _ = time.Parse("2006-01-02 15:04:05", "2006-01-02 15:04:05")
+	prefix = strings.Trim(prefix, "/")
+	prefix = prefix + "/"
 	minioObjectsChan := minioClient.ListObjects(ctx, bucketName, minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: false,
@@ -188,13 +189,21 @@ func isfirstlyBackupToMinio(ctx context.Context, minioClient *minio.Client, pref
 	for object := range minioObjectsChan {
 		if object.LastModified.After(flagTime) {
 			flagTime = object.LastModified
-			lastBinlogName = object.Key
+			lastBinlogName = strings.TrimLeft(object.Key, prefix)
 		}
 	}
 	if len(lastBinlogName) == 0 {
-		return "", nil
+		return masterLogs[0].LogName, nil
 	}
-	return lastBinlogName, nil
+	for k, v := range masterLogs {
+		if v.LogName == lastBinlogName {
+			if k == len(masterLogs)-1 {
+				return v.LogName, nil
+			}
+			return masterLogs[k+1].LogName, nil
+		}
+	}
+	return masterLogs[0].LogName, nil
 }
 func backupToLocalFile(backConf models.BackupConfT) error {
 	err := makeTmpDir(backConf.TmpPath)
